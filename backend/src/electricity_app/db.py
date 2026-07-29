@@ -291,19 +291,6 @@ class Database:
             )
         return cursor.rowcount == 1
 
-    def backup_to(self, destination_path: Path) -> None:
-        destination = Path(destination_path)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        with self.connection(
-            configure=False,
-            read_only=True,
-        ) as source:
-            with self.connection(
-                destination,
-                configure=False,
-            ) as target:
-                source.backup(target)
-
     def replace_daily_summary(
         self,
         day: date,

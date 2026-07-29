@@ -12,7 +12,6 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter
 from fastapi.testclient import TestClient
 from starlette.middleware.sessions import SessionMiddleware
-from starlette.routing import Mount
 
 from electricity_app.domain import SyncOutcome
 from electricity_app.db import Database
@@ -145,7 +144,7 @@ def close_app_clients(app) -> None:
     app.state.wechat_http.close()
 
 
-def test_create_app_initializes_database_static_mount_and_secure_session(
+def test_create_app_initializes_database_static_routes_and_secure_session(
     settings, monkeypatch
 ):
     main = import_main(monkeypatch, settings)
@@ -155,10 +154,12 @@ def test_create_app_initializes_database_static_mount_and_secure_session(
 
     try:
         assert settings.database_path.exists()
-        assert any(
-            isinstance(route, Mount) and route.path == "/static"
-            for route in app.routes
-        )
+        routes = {route.path for route in app.routes}
+        assert {
+            "/static/app.css",
+            "/static/app.js",
+            "/static/dashboard.html",
+        } <= routes
         session = next(
             middleware
             for middleware in app.user_middleware

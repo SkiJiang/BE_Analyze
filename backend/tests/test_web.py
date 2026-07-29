@@ -489,6 +489,17 @@ def test_dashboard_page_contains_required_sections(
     assert 'id="stale-banner"' in response.text
 
 
+def test_static_dashboard_asset_contains_required_sections(
+    client: TestClient,
+):
+    response = client.get("/static/dashboard.html")
+
+    assert response.status_code == 200
+    assert 'id="balance-card"' in response.text
+    assert 'id="trend-chart"' in response.text
+    assert 'id="hourly-chart"' in response.text
+
+
 def test_dashboard_page_redirects_unauthenticated_user(client: TestClient):
     response = client.get("/dashboard", follow_redirects=False)
 

@@ -21,7 +21,6 @@ from fastapi.responses import (
     RedirectResponse,
     Response,
 )
-from fastapi.templating import Jinja2Templates
 import httpx
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
@@ -35,9 +34,6 @@ WECHAT_AUTHORIZE_URL = "https://open.weixin.qq.com/connect/oauth2/authorize"
 OAUTH_STATE_MAX_AGE_SECONDS = 300
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 PACKAGE_DIRECTORY = Path(__file__).resolve().parent
-TEMPLATES = Jinja2Templates(directory=PACKAGE_DIRECTORY / "templates")
-
-
 class _HttpxQueryRedactionFilter(logging.Filter):
     _electricity_app_query_redaction = True
 
@@ -228,9 +224,9 @@ def create_router(
             require_authorized_identity(request)
         except HTTPException:
             return RedirectResponse("/wechat/entry", status_code=303)
-        return TEMPLATES.TemplateResponse(
-            request=request,
-            name="dashboard.html",
+        return FileResponse(
+            PACKAGE_DIRECTORY / "static" / "dashboard.html",
+            media_type="text/html",
         )
 
     @router.get("/static/app.css", response_class=FileResponse)
@@ -245,6 +241,13 @@ def create_router(
         return FileResponse(
             PACKAGE_DIRECTORY / "static" / "app.js",
             media_type="text/javascript",
+        )
+
+    @router.get("/static/dashboard.html", response_class=FileResponse)
+    def dashboard_document() -> FileResponse:
+        return FileResponse(
+            PACKAGE_DIRECTORY / "static" / "dashboard.html",
+            media_type="text/html",
         )
 
     @router.get(

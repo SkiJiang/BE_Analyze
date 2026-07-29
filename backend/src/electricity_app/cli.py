@@ -1,8 +1,5 @@
 import argparse
-from datetime import UTC, date, datetime, timedelta
-import os
-from pathlib import Path
-import re
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from electricity_app.analytics import AnalyticsService
@@ -22,18 +19,6 @@ _PROBE_REQUIRED_FIELDS = (
     "roomName",
     "time",
 )
-_MANAGED_BACKUP = re.compile(
-    r"^electricity-\d{8}T\d{6}Z\.db$"
-)
-
-
-def _positive_int(value: str) -> int:
-    parsed = int(value)
-    if parsed <= 0:
-        raise argparse.ArgumentTypeError("must be positive")
-    return parsed
-
-
 def main() -> None:
     """Run the administrative commands."""
     parser = argparse.ArgumentParser(prog="electricity-admin")
@@ -50,19 +35,11 @@ def main() -> None:
     disable_wechat = subcommands.add_parser("disable-wechat")
     disable_wechat.add_argument("request_id", type=int)
     subcommands.add_parser("reset-property-auth")
-    backup_db = subcommands.add_parser("backup-db")
-    backup_db.add_argument("backup_directory", type=Path)
-    backup_db.add_argument(
-        "--retention-days",
-        type=_positive_int,
-        default=30,
-    )
     args = parser.parse_args()
 
     settings = get_settings()
     database = Database(settings.database_path)
-    if args.command != "backup-db":
-        database.initialize()
+    database.initialize()
 
     if args.command == "init-db":
         return
@@ -81,37 +58,6 @@ def main() -> None:
     if args.command == "reset-property-auth":
         if not database.clear_auth_gate():
             raise SystemExit(1)
-        return
-    if args.command == "backup-db":
-        backup_directory = args.backup_directory.resolve()
-        backup_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if not backup_directory.is_dir():
-            raise SystemExit(1)
-        now = datetime.now(UTC)
-        filename = f"electricity-{now.strftime('%Y%m%dT%H%M%SZ')}.db"
-        destination = backup_directory / filename
-        temporary = backup_directory / f".{filename}.{os.getpid()}.tmp"
-        if temporary.exists():
-            raise SystemExit(1)
-        try:
-            database.backup_to(temporary)
-            temporary.chmod(0o600)
-            temporary.replace(destination)
-            destination.chmod(0o600)
-        finally:
-            if temporary.exists():
-                temporary.unlink()
-
-        cutoff = (now - timedelta(days=args.retention_days)).timestamp()
-        for candidate in backup_directory.iterdir():
-            if (
-                candidate != destination
-                and candidate.is_file()
-                and _MANAGED_BACKUP.fullmatch(candidate.name)
-                and candidate.stat().st_mtime < cutoff
-            ):
-                candidate.unlink()
-        print(f"backup={destination.name}")
         return
     if args.command == "probe-property-schema":
         property_client = PropertyClient(settings)

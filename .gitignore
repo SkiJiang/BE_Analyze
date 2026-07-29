@@ -10,14 +10,12 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 
-# Runtime data and backups
+# Runtime data
 *.db
 *.db-*
 *.sqlite
 *.sqlite3
-backups/
 *.log
-token_cache.txt
 
 # OS/editor files
 .DS_Store

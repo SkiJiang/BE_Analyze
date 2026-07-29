@@ -1,9 +1,6 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
-import os
 from pathlib import Path
-import sqlite3
-import stat
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -436,71 +433,3 @@ def test_reset_property_auth_clears_gate_for_running_scheduler(
     cli.main()
 
     assert database.auth_gate_active() is False
-
-
-def test_backup_cli_creates_consistent_restricted_copy_and_prunes_retention(
-    tmp_path,
-    monkeypatch,
-):
-    from electricity_app import cli
-
-    database_path = tmp_path / "test.db"
-    database = Database(database_path)
-    database.initialize()
-    database.upsert_records(
-        [
-            _record(
-                "backup-detail",
-                datetime(2026, 7, 29, 10, 7, tzinfo=TZ),
-                energy="1",
-                money="0.55",
-                balance="100",
-            )
-        ]
-    )
-    backup_directory = tmp_path / "backups"
-    backup_directory.mkdir()
-    expired = backup_directory / "electricity-20260101T000000Z.db"
-    expired.write_bytes(b"expired")
-    unrelated = backup_directory / "manual-copy.db"
-    unrelated.write_bytes(b"keep")
-    old_timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp()
-    os.utime(expired, (old_timestamp, old_timestamp))
-    os.utime(unrelated, (old_timestamp, old_timestamp))
-
-    monkeypatch.setattr(
-        cli,
-        "get_settings",
-        lambda: SimpleNamespace(database_path=database_path),
-    )
-    monkeypatch.setattr(
-        "sys.argv",
-        [
-            "electricity-admin",
-            "backup-db",
-            str(backup_directory),
-            "--retention-days",
-            "30",
-        ],
-    )
-    monkeypatch.setattr(
-        cli.Database,
-        "initialize",
-        lambda self: (_ for _ in ()).throw(
-            AssertionError("backup must not initialize the source database")
-        ),
-    )
-
-    cli.main()
-
-    backups = list(backup_directory.glob("electricity-*.db"))
-    assert expired not in backups
-    assert len(backups) == 1
-    assert unrelated.exists()
-    assert not list(backup_directory.glob("*.tmp"))
-    if os.name == "posix":
-        assert stat.S_IMODE(backups[0].stat().st_mode) == 0o600
-    with sqlite3.connect(backups[0]) as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM electricity_records"
-        ).fetchone()[0] == 1

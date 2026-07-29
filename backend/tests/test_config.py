@@ -22,7 +22,6 @@ def valid_settings() -> dict[str, str]:
 def test_settings_accept_https_urls_and_strong_secrets():
     settings = Settings(**valid_settings())
     assert str(settings.property_base_url).startswith("https://")
-    assert settings.poll_minutes == 30
     assert settings.timezone == "Asia/Shanghai"
     assert settings.property_room_name == "麒麟科创园-7号楼-805"
     assert settings.property_device_name == "7号楼/8F/805电表"

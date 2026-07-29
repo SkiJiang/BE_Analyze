@@ -25,7 +25,7 @@ TEMPLATE = (
     ROOT
     / "src"
     / "electricity_app"
-    / "templates"
+    / "static"
     / "dashboard.html"
 )
 ECHARTS_TAG = (

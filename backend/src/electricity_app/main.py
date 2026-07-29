@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 import logging
-from pathlib import Path
 import re
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -14,7 +13,6 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI
 import httpx
 from starlette.middleware.sessions import SessionMiddleware
-from starlette.staticfiles import StaticFiles
 
 from electricity_app.analytics import AnalyticsService
 from electricity_app.config import Settings, get_settings
@@ -22,10 +20,9 @@ from electricity_app.db import Database
 from electricity_app.property_client import PropertyClient
 from electricity_app.scheduler import create_scheduler
 from electricity_app.sync_service import SyncService
-from electricity_app.web import TEMPLATES, create_router
+from electricity_app.web import create_router
 
 
-PACKAGE_DIRECTORY = Path(__file__).resolve().parent
 _SENSITIVE_KEY = re.compile(
     r"password|token|cookie|authorization|openid|code",
     re.IGNORECASE,
@@ -120,11 +117,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         same_site="lax",
         max_age=resolved_settings.session_max_age_seconds,
     )
-    application.mount(
-        "/static",
-        StaticFiles(directory=PACKAGE_DIRECTORY / "static"),
-        name="static",
-    )
     application.include_router(
         create_router(
             resolved_settings,
@@ -142,7 +134,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.sync_service = sync_service
     application.state.analytics_service = analytics_service
     application.state.scheduler = scheduler
-    application.state.templates = TEMPLATES
     return application
 
 

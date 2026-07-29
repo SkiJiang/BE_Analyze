@@ -28,7 +28,6 @@ class Settings(BaseSettings):
     wechat_app_secret: SecretStr = Field(min_length=16)
     wechat_message_token: SecretStr = Field(min_length=16)
     public_base_url: AnyHttpUrl
-    poll_minutes: int = Field(default=30, ge=30, le=30)
     timezone: Literal["Asia/Shanghai"] = "Asia/Shanghai"
     stale_after_minutes: int = Field(default=90, ge=90, le=90)
 

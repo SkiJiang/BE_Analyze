@@ -1,0 +1,24 @@
+# Runtime secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Python environments, test output, and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# Runtime data and backups
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+backups/
+*.log
+token_cache.txt
+
+# OS/editor files
+.DS_Store
+Thumbs.db

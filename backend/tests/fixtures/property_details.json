@@ -1,0 +1,28 @@
+{
+  "success": true,
+  "result": {
+    "total": 2,
+    "records": [
+      {
+        "id": "detail-2",
+        "roomName": "麒麟科创园-7号楼-805",
+        "deviceName": "7号楼/8F/805电表",
+        "time": "2026-07-29 10:07:07",
+        "energy": "0.1",
+        "money": "0.06",
+        "rate": "0.55",
+        "balance": "182.66"
+      },
+      {
+        "id": "detail-1",
+        "roomName": "麒麟科创园-7号楼-805",
+        "deviceName": "7号楼/8F/805电表",
+        "time": "2026-07-29 09:09:05",
+        "energy": "0.1",
+        "money": "0.06",
+        "rate": "0.55",
+        "balance": "182.71"
+      }
+    ]
+  }
+}

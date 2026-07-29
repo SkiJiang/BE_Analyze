@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1220">
+  <title>家庭用电分析</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+  <script defer src="/static/app.js"></script>
+</head>
+<body>
+  <div class="page-canvas">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">家庭能源助手</p>
+        <h1>用电概览</h1>
+      </div>
+      <p id="last-sync" class="sync-text" aria-live="polite">正在读取同步时间…</p>
+    </header>
+
+    <aside id="stale-banner" class="stale-banner" role="alert" hidden>
+      数据超过 90 分钟未更新
+    </aside>
+
+    <p id="page-error" class="page-error" role="alert" hidden>数据加载失败，请稍后重试。</p>
+    <p id="chart-error" class="chart-error" role="status" hidden></p>
+
+    <main id="dashboard" aria-busy="true">
+      <section class="summary-grid" aria-label="今日用电摘要">
+        <article id="balance-card" class="summary-card">
+          <p class="card-label">账户余额</p>
+          <p id="balance-value" class="card-value" aria-live="polite">加载中…</p>
+        </article>
+        <article id="today-energy-card" class="summary-card">
+          <p class="card-label">今日用电</p>
+          <p id="today-energy-value" class="card-value" aria-live="polite">加载中…</p>
+        </article>
+        <article id="today-cost-card" class="summary-card">
+          <p class="card-label">今日电费</p>
+          <p id="today-cost-value" class="card-value" aria-live="polite">加载中…</p>
+        </article>
+        <article id="estimated-days-card" class="summary-card">
+          <p class="card-label">预计可用</p>
+          <p id="estimated-days-value" class="card-value" aria-live="polite">加载中…</p>
+        </article>
+      </section>
+
+      <section class="panel trend-panel" aria-labelledby="trend-heading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">趋势</p>
+            <h2 id="trend-heading">用电变化</h2>
+          </div>
+          <div class="range-controls" role="group" aria-label="选择趋势时间范围">
+            <button class="range-button is-active" type="button" data-range="24h" aria-pressed="true">24 小时</button>
+            <button class="range-button" type="button" data-range="7d" aria-pressed="false">7 天</button>
+            <button class="range-button" type="button" data-range="30d" aria-pressed="false">30 天</button>
+          </div>
+        </div>
+        <p id="trend-status" class="chart-status" role="status">正在加载趋势…</p>
+        <div id="trend-chart" class="chart" role="img" aria-label="所选时间范围内的用电趋势图"></div>
+        <div class="range-summary" aria-label="所选时段合计">
+          <p><span>用电合计</span><strong id="range-energy-total">加载中…</strong></p>
+          <p><span>费用合计</span><strong id="range-cost-total">加载中…</strong></p>
+        </div>
+        <p id="highest-day-text" class="comparison-text" aria-live="polite">正在计算最高用电日…</p>
+        <p id="comparison-text" class="comparison-text" aria-live="polite">正在计算今日对比…</p>
+        <p id="recent-mean-comparison" class="comparison-text" aria-live="polite">正在计算近 7 日均值对比…</p>
+      </section>
+
+      <section class="panel" aria-labelledby="hourly-heading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">分布</p>
+            <h2 id="hourly-heading">今日小时用电</h2>
+          </div>
+        </div>
+        <p id="hourly-status" class="chart-status" role="status">正在加载小时分布…</p>
+        <div id="hourly-chart" class="chart" role="img" aria-label="今日每小时用电分布图"></div>
+        <p id="typical-peak-text" class="comparison-text" aria-live="polite">正在计算历史典型高峰…</p>
+      </section>
+
+      <section class="panel" aria-labelledby="anomaly-heading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">提醒</p>
+            <h2 id="anomaly-heading">异常观察</h2>
+          </div>
+        </div>
+        <ul id="anomaly-list" class="anomaly-list" aria-live="polite">
+          <li class="empty-state">正在检查用电异常…</li>
+        </ul>
+      </section>
+
+      <section class="panel" aria-labelledby="detail-heading">
+        <div class="section-heading detail-heading">
+          <div>
+            <p class="eyebrow">明细</p>
+            <h2 id="detail-heading">按日查看</h2>
+          </div>
+          <label class="date-control" for="detail-date">
+            <span class="sr-only">选择明细日期</span>
+            <input id="detail-date" type="date" aria-describedby="detail-status">
+          </label>
+        </div>
+        <p id="detail-summary" class="detail-summary" aria-live="polite">请选择日期查看明细</p>
+        <p id="detail-status" class="chart-status" role="status"></p>
+        <div class="table-scroll" tabindex="0" aria-label="当日半小时用电明细">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">时段</th>
+                <th scope="col">用电量</th>
+                <th scope="col">电费</th>
+              </tr>
+            </thead>
+            <tbody id="detail-table-body">
+              <tr>
+                <td colspan="3" class="empty-state">正在加载明细…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</body>
+</html>

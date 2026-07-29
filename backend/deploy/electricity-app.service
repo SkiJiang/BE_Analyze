@@ -1,0 +1,23 @@
+[Unit]
+Description=805 Electricity Analysis
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=electricity
+Group=electricity
+WorkingDirectory=/opt/electricity-app
+EnvironmentFile=/etc/electricity-app/electricity.env
+ExecStart=/opt/electricity-app/.venv/bin/uvicorn electricity_app.main:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=on-failure
+RestartSec=5
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/electricity-app
+NoNewPrivileges=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily backup for 805 electricity data
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=30m
+Persistent=true
+Unit=electricity-backup.service
+
+[Install]
+WantedBy=timers.target

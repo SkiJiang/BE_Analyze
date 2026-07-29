@@ -48,10 +48,11 @@ class DailyReminderService:
         values = {
             "room": self._settings.property_device_name,
             "date": local_now.date().isoformat(),
-            "today_energy": _format_decimal(summary.today_energy, " kWh"),
-            "today_cost": _format_decimal(summary.today_cost, " yuan"),
-            "balance": _format_optional_decimal(summary.balance, " yuan"),
-            "week_energy": _format_decimal(summary.seven_day_energy, " kWh"),
+            # Units and the currency sign are part of the WeChat template text.
+            "today_energy": _format_decimal(summary.today_energy),
+            "today_cost": _format_decimal(summary.today_cost),
+            "balance": _format_optional_decimal(summary.balance),
+            "week_energy": _format_decimal(summary.seven_day_energy),
             "updated_at": _format_datetime(summary.last_successful_sync),
             "request_url": str(self._settings.public_base_url).rstrip("/")
             + "/wechat/entry",
@@ -73,12 +74,12 @@ class DailyReminderService:
         return sent
 
 
-def _format_decimal(value: Decimal, suffix: str) -> str:
-    return f"{value.quantize(Decimal('0.01'))}{suffix}"
+def _format_decimal(value: Decimal) -> str:
+    return str(value.quantize(Decimal("0.01")))
 
 
-def _format_optional_decimal(value: Decimal | None, suffix: str) -> str:
-    return _format_decimal(value, suffix) if value is not None else "unavailable"
+def _format_optional_decimal(value: Decimal | None) -> str:
+    return _format_decimal(value) if value is not None else "unavailable"
 
 
 def _format_datetime(value: datetime | None) -> str:

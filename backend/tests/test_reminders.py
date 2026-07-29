@@ -43,6 +43,10 @@ def test_daily_reminder_sends_template_once_per_recipient(settings, tmp_path):
     client.send_template.assert_called_once()
     openid, values = client.send_template.call_args.args
     assert openid == "openid-value"
+    assert values["today_energy"] == "4.50"
+    assert values["today_cost"] == "2.70"
+    assert values["balance"] == "10.00"
+    assert values["week_energy"] == "20.00"
     assert values["request_url"] == "https://electricity.example.test/wechat/entry"
 
 

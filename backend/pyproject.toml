@@ -8,6 +8,7 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
   "apscheduler==3.10.4",
+  "cryptography==46.0.3",
   "fastapi==0.116.1",
   "httpx==0.28.1",
   "itsdangerous==2.2.0",

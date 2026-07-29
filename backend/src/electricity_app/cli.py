@@ -7,6 +7,9 @@ from electricity_app.config import get_settings
 from electricity_app.db import Database
 from electricity_app.property_client import PropertyClient
 from electricity_app.sync_service import SyncService
+from electricity_app.wechat_template import WeChatTemplateClient
+from electricity_app.reminders import DailyReminderService
+import httpx
 
 
 _PROBE_REQUIRED_FIELDS = (
@@ -35,6 +38,7 @@ def main() -> None:
     disable_wechat = subcommands.add_parser("disable-wechat")
     disable_wechat.add_argument("request_id", type=int)
     subcommands.add_parser("reset-property-auth")
+    subcommands.add_parser("send-daily-reminder")
     args = parser.parse_args()
 
     settings = get_settings()
@@ -58,6 +62,17 @@ def main() -> None:
     if args.command == "reset-property-auth":
         if not database.clear_auth_gate():
             raise SystemExit(1)
+        return
+    if args.command == "send-daily-reminder":
+        analytics = AnalyticsService(database)
+        with httpx.Client(verify=True, timeout=httpx.Timeout(10, read=30)) as http:
+            sent = DailyReminderService(
+                settings,
+                database,
+                analytics,
+                WeChatTemplateClient(settings, http=http),
+            ).send_today()
+        print(f"sent={sent}")
         return
     if args.command == "probe-property-schema":
         property_client = PropertyClient(settings)

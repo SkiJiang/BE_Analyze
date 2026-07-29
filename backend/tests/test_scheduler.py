@@ -56,6 +56,20 @@ def test_scheduler_has_30_minute_sync_and_daily_reconcile(
     assert jobs["reconcile_30_days"].misfire_grace_time == 900
 
 
+def test_scheduler_adds_daily_template_reminder(sync_service, analytics_service):
+    reminder_service = Mock()
+    scheduler = create_scheduler(
+        sync_service, analytics_service, "Asia/Shanghai", reminder_service
+    )
+
+    job = scheduler.get_job("daily_reminder")
+
+    assert job is not None
+    assert "hour='20'" in str(job.trigger)
+    assert "minute='0'" in str(job.trigger)
+    assert job.func == reminder_service.send_today
+
+
 def test_successful_job_rebuilds_the_synchronized_date_range(
     sync_service: Mock, analytics_service: Mock
 ):
@@ -132,6 +146,8 @@ def import_main(monkeypatch, settings):
         "WECHAT_APP_ID": settings.wechat_app_id,
         "WECHAT_APP_SECRET": settings.wechat_app_secret.get_secret_value(),
         "WECHAT_MESSAGE_TOKEN": settings.wechat_message_token.get_secret_value(),
+        "WECHAT_DAILY_TEMPLATE_ID": settings.wechat_daily_template_id,
+        "WECHAT_OPENID_ENCRYPTION_KEY": settings.wechat_openid_encryption_key.get_secret_value(),
         "PUBLIC_BASE_URL": str(settings.public_base_url),
     }
     for key, value in environment.items():

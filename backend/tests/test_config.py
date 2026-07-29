@@ -15,6 +15,8 @@ def valid_settings() -> dict[str, str]:
         "wechat_app_id": "wx1234567890abcdef",
         "wechat_app_secret": "w" * 32,
         "wechat_message_token": "m" * 32,
+        "wechat_daily_template_id": "daily-template-id",
+        "wechat_openid_encryption_key": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
         "public_base_url": "https://electricity.example.test",
     }
 
@@ -61,6 +63,20 @@ def test_settings_rejects_a_long_lived_session():
 def test_settings_requires_a_strong_wechat_message_token():
     values = valid_settings()
     values.pop("wechat_message_token")
+
+    with pytest.raises(ValidationError):
+        Settings(**values)
+
+
+def test_settings_requires_template_message_configuration():
+    values = valid_settings()
+    values.pop("wechat_daily_template_id")
+
+    with pytest.raises(ValidationError):
+        Settings(**values)
+
+    values = valid_settings()
+    values.pop("wechat_openid_encryption_key")
 
     with pytest.raises(ValidationError):
         Settings(**values)

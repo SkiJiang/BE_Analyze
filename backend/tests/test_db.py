@@ -142,6 +142,16 @@ def test_allowlist_starts_disabled_and_can_be_enabled(tmp_path):
     assert db.is_openid_allowed("digest-value") is True
 
 
+def test_enabled_allowlist_stores_encrypted_openid_for_reminders(tmp_path):
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    request_id = db.upsert_pending_openid("digest-value")
+    assert db.set_openid_enabled(request_id, True)
+
+    assert db.save_authorized_openid("digest-value", "ciphertext") is True
+    assert db.list_reminder_recipients() == [("digest-value", "ciphertext")]
+
+
 def test_enabling_wechat_request_requires_a_disabled_row(tmp_path):
     db = Database(tmp_path / "test.db")
     db.initialize()

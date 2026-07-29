@@ -74,8 +74,17 @@ class Database:
                 CREATE TABLE IF NOT EXISTS wechat_allowlist (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     openid_hmac TEXT NOT NULL UNIQUE,
+                    openid_ciphertext TEXT,
                     enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0, 1)),
                     created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS daily_reminder_deliveries (
+                    day TEXT NOT NULL,
+                    openid_hmac TEXT NOT NULL,
+                    sent_at TEXT NOT NULL,
+                    PRIMARY KEY (day, openid_hmac),
+                    FOREIGN KEY (openid_hmac) REFERENCES wechat_allowlist(openid_hmac)
                 );
 
                 CREATE TABLE IF NOT EXISTS oauth_nonces (
@@ -108,6 +117,16 @@ class Database:
                     SET effective_at = observed_at
                     WHERE effective_at IS NULL
                     """
+                )
+            allowlist_columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(wechat_allowlist)"
+                ).fetchall()
+            }
+            if "openid_ciphertext" not in allowlist_columns:
+                connection.execute(
+                    "ALTER TABLE wechat_allowlist ADD COLUMN openid_ciphertext TEXT"
                 )
             connection.execute(
                 """
@@ -409,6 +428,61 @@ class Database:
                 (openid_hmac,),
             ).fetchone()
         return row is not None
+
+    def save_authorized_openid(
+        self, openid_hmac: str, openid_ciphertext: str
+    ) -> bool:
+        with self.connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE wechat_allowlist
+                SET openid_ciphertext = ?
+                WHERE openid_hmac = ? AND enabled = 1
+                """,
+                (openid_ciphertext, openid_hmac),
+            )
+        return cursor.rowcount == 1
+
+    def list_reminder_recipients(self) -> list[tuple[str, str]]:
+        with self.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT openid_hmac, openid_ciphertext
+                FROM wechat_allowlist
+                WHERE enabled = 1 AND openid_ciphertext IS NOT NULL
+                ORDER BY id
+                """
+            ).fetchall()
+        return [
+            (str(row["openid_hmac"]), str(row["openid_ciphertext"]))
+            for row in rows
+        ]
+
+    def reminder_was_sent(self, day: date, openid_hmac: str) -> bool:
+        """Return whether this recipient has already received this day's reminder."""
+        with self.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM daily_reminder_deliveries
+                WHERE day = ? AND openid_hmac = ?
+                """,
+                (day.isoformat(), openid_hmac),
+            ).fetchone()
+        return row is not None
+
+    def record_reminder_sent(
+        self, day: date, openid_hmac: str, sent_at: datetime
+    ) -> None:
+        """Persist a successful delivery so retries cannot duplicate it."""
+        with self.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO daily_reminder_deliveries (day, openid_hmac, sent_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(day, openid_hmac) DO NOTHING
+                """,
+                (day.isoformat(), openid_hmac, _datetime_to_text(sent_at)),
+            )
 
     def create_oauth_nonce(
         self,

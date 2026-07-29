@@ -11,6 +11,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from electricity_app.analytics import AnalyticsService
 from electricity_app.domain import SyncOutcome
 from electricity_app.sync_service import SyncService
+from electricity_app.reminders import DailyReminderService
 
 
 LOGGER = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ def create_scheduler(
     sync_service: SyncService,
     analytics_service: AnalyticsService,
     timezone: str,
+    reminder_service: DailyReminderService | None = None,
 ) -> BackgroundScheduler:
     """Build the process-local scheduler without starting it."""
     scheduler = BackgroundScheduler(timezone=timezone)
@@ -68,4 +70,15 @@ def create_scheduler(
         coalesce=True,
         misfire_grace_time=900,
     )
+    if reminder_service is not None:
+        scheduler.add_job(
+            reminder_service.send_today,
+            "cron",
+            hour=20,
+            minute=0,
+            id="daily_reminder",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=900,
+        )
     return scheduler

@@ -6,7 +6,7 @@
 
 ## 模板数据
 
-发送数据严格使用模板已定义的字段：`room`、`date`、`today_energy`、`today_cost`、`balance`、`week_energy`、`updated_at`、`remark`。模板 ID 仅从 `WECHAT_DAILY_TEMPLATE_ID` 环境变量读取，不进入源码、README、日志或测试输出。
+发送数据严格使用模板已定义的字段：`room`、`date`、`today_energy`、`today_cost`、`balance`、`week_energy`、`updated_at`、`request_url`。模板 ID 仅从 `WECHAT_DAILY_TEMPLATE_ID` 环境变量读取，不进入源码、README、日志或测试输出。`request_url` 与模板消息点击链接均为 `PUBLIC_BASE_URL + /wechat/entry`。
 
 ## 用户身份与安全
 

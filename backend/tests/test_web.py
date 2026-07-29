@@ -270,6 +270,10 @@ def test_callback_redirects_enabled_openid_to_dashboard(
 
     assert response.status_code == 307
     assert response.headers["location"] == "/dashboard"
+    recipients = db.list_reminder_recipients()
+    assert len(recipients) == 1
+    assert recipients[0][0] == digest
+    assert recipients[0][1] != RAW_OPENID
 
 
 def test_callback_rejects_expired_state_before_code_exchange(

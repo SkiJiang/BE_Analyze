@@ -20,6 +20,8 @@ from electricity_app.db import Database
 from electricity_app.property_client import PropertyClient
 from electricity_app.scheduler import create_scheduler
 from electricity_app.sync_service import SyncService
+from electricity_app.reminders import DailyReminderService
+from electricity_app.wechat_template import WeChatTemplateClient
 from electricity_app.web import create_router
 
 
@@ -73,10 +75,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             minutes=resolved_settings.stale_after_minutes
         ),
     )
+    reminder_service = DailyReminderService(
+        resolved_settings,
+        database,
+        analytics_service,
+        WeChatTemplateClient(resolved_settings, http=wechat_http),
+    )
     scheduler = create_scheduler(
         sync_service,
         analytics_service,
         resolved_settings.timezone,
+        reminder_service,
     )
 
     @asynccontextmanager
@@ -133,6 +142,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.wechat_http = wechat_http
     application.state.sync_service = sync_service
     application.state.analytics_service = analytics_service
+    application.state.reminder_service = reminder_service
     application.state.scheduler = scheduler
     return application
 

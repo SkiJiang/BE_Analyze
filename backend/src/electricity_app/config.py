@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     wechat_app_id: str = Field(pattern=r"^wx[0-9A-Za-z]{16}$")
     wechat_app_secret: SecretStr = Field(min_length=16)
     wechat_message_token: SecretStr = Field(min_length=16)
+    wechat_daily_template_id: str = Field(min_length=1)
+    wechat_openid_encryption_key: SecretStr = Field(min_length=44)
     public_base_url: AnyHttpUrl
     timezone: Literal["Asia/Shanghai"] = "Asia/Shanghai"
     stale_after_minutes: int = Field(default=90, ge=90, le=90)

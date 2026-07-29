@@ -88,7 +88,7 @@ BE_Analyze/
 
 ```bash
 sudo apt update
-sudo apt install --yes git python3.12-venv nginx certbot python3-certbot-nginx sqlite3 curl rsync
+sudo apt install --yes git nginx certbot python3-certbot-nginx sqlite3 curl rsync
 
 sudo useradd --system \
   --home-dir /var/lib/electricity-app \
@@ -106,9 +106,9 @@ sudo chown -R root:root /opt/electricity-app
 sudo find /opt/electricity-app -type d -exec chmod 0755 {} +
 sudo find /opt/electricity-app -type f -exec chmod 0644 {} +
 
-sudo python3.12 -m venv /opt/electricity-app/.venv
-sudo /opt/electricity-app/.venv/bin/pip install --upgrade pip
-sudo /opt/electricity-app/.venv/bin/pip install /opt/electricity-app/backend
+curl -LsSf https://astral.sh/uv/install.sh | sh
+sudo install -m 0755 /root/.local/bin/uv /usr/local/bin/uv
+sudo /usr/local/bin/uv sync --project /opt/electricity-app/backend --locked
 ```
 
 代码目录由 `root` 持有；应用运行用户只需要读取源码和进入目录的权限。
@@ -139,6 +139,8 @@ OPENID_HMAC_KEY=至少32位随机字符串
 
 WECHAT_APP_ID=REPLACE_ME
 WECHAT_APP_SECRET=REPLACE_ME
+WECHAT_DAILY_TEMPLATE_ID=REPLACE_ME
+WECHAT_OPENID_ENCRYPTION_KEY=REPLACE_ME
 WECHAT_MESSAGE_TOKEN=至少16位随机字符串
 PUBLIC_BASE_URL=https://<domain>
 
@@ -263,16 +265,16 @@ Certbot 会自动在 Nginx 配置中加入证书和 HTTP→HTTPS 跳转。之后
 sudo systemd-run --quiet --wait --pipe --collect \
   --property=User=electricity \
   --property=Group=electricity \
-  --property=WorkingDirectory=/opt/electricity-app \
+  --property=WorkingDirectory=/opt/electricity-app/backend \
   --property=EnvironmentFile=/etc/electricity-app/electricity.env \
-  /opt/electricity-app/.venv/bin/electricity-admin list-pending
+  /usr/local/bin/uv run --project /opt/electricity-app/backend --no-sync electricity-admin list-pending
 
 sudo systemd-run --quiet --wait --pipe --collect \
   --property=User=electricity \
   --property=Group=electricity \
-  --property=WorkingDirectory=/opt/electricity-app \
+  --property=WorkingDirectory=/opt/electricity-app/backend \
   --property=EnvironmentFile=/etc/electricity-app/electricity.env \
-  /opt/electricity-app/.venv/bin/electricity-admin enable-wechat <request_id>
+  /usr/local/bin/uv run --project /opt/electricity-app/backend --no-sync electricity-admin enable-wechat <request_id>
 ```
 
 批准后重新打开菜单即可进入 H5 仪表盘。撤销某个用户权限：
@@ -281,9 +283,9 @@ sudo systemd-run --quiet --wait --pipe --collect \
 sudo systemd-run --quiet --wait --pipe --collect \
   --property=User=electricity \
   --property=Group=electricity \
-  --property=WorkingDirectory=/opt/electricity-app \
+  --property=WorkingDirectory=/opt/electricity-app/backend \
   --property=EnvironmentFile=/etc/electricity-app/electricity.env \
-  /opt/electricity-app/.venv/bin/electricity-admin disable-wechat <request_id>
+  /usr/local/bin/uv run --project /opt/electricity-app/backend --no-sync electricity-admin disable-wechat <request_id>
 ```
 
 ## 日常运维
@@ -311,9 +313,9 @@ sudo journalctl -u electricity-app -n 100 --no-pager
 sudo systemd-run --quiet --wait --pipe --collect \
   --property=User=electricity \
   --property=Group=electricity \
-  --property=WorkingDirectory=/opt/electricity-app \
+  --property=WorkingDirectory=/opt/electricity-app/backend \
   --property=EnvironmentFile=/etc/electricity-app/electricity.env \
-  /opt/electricity-app/.venv/bin/electricity-admin reset-property-auth
+  /usr/local/bin/uv run --project /opt/electricity-app/backend --no-sync electricity-admin reset-property-auth
 sudo systemctl restart electricity-app
 ```
 
@@ -323,9 +325,9 @@ sudo systemctl restart electricity-app
 sudo systemd-run --quiet --wait --pipe --collect \
   --property=User=electricity \
   --property=Group=electricity \
-  --property=WorkingDirectory=/opt/electricity-app \
+  --property=WorkingDirectory=/opt/electricity-app/backend \
   --property=EnvironmentFile=/etc/electricity-app/electricity.env \
-  /opt/electricity-app/.venv/bin/electricity-admin summarize-date 2026-07-29
+  /usr/local/bin/uv run --project /opt/electricity-app/backend --no-sync electricity-admin summarize-date 2026-07-29
 ```
 
 ### 更新服务器代码
@@ -333,7 +335,7 @@ sudo systemd-run --quiet --wait --pipe --collect \
 ```bash
 cd /opt/electricity-app
 sudo git pull --ff-only origin main
-sudo /opt/electricity-app/.venv/bin/pip install --no-deps --upgrade /opt/electricity-app/backend
+sudo /usr/local/bin/uv sync --project /opt/electricity-app/backend --locked
 sudo install -o root -g root -m 0644 \
   /opt/electricity-app/backend/deploy/electricity-app.service \
   /etc/systemd/system/electricity-app.service
@@ -345,7 +347,7 @@ curl -fsS https://<domain>/health/live
 若新增了 Python 依赖，不使用 `--no-deps` 再执行一次安装：
 
 ```bash
-sudo /opt/electricity-app/.venv/bin/pip install --upgrade /opt/electricity-app/backend
+sudo /usr/local/bin/uv sync --project /opt/electricity-app/backend --locked
 ```
 
 ## 故障排查

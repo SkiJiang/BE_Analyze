@@ -23,6 +23,7 @@ from fastapi.responses import (
 )
 import httpx
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from cryptography.fernet import Fernet
 
 from electricity_app.analytics import AnalyticsService
 from electricity_app.config import Settings
@@ -214,6 +215,13 @@ def create_router(
                 },
             )
 
+        encrypted_openid = Fernet(
+            settings.wechat_openid_encryption_key.get_secret_value().encode(
+                "utf-8"
+            )
+        ).encrypt(raw_openid.encode("utf-8")).decode("utf-8")
+        if not db.save_authorized_openid(identity, encrypted_openid):
+            raise HTTPException(status_code=403, detail="unauthorized")
         request.session.clear()
         request.session["openid_hmac"] = identity
         return RedirectResponse("/dashboard", status_code=307)

@@ -23,6 +23,8 @@ def settings(tmp_path) -> Settings:
         wechat_app_id="wx1234567890abcdef",
         wechat_app_secret="w" * 32,
         wechat_message_token="m" * 32,
+        wechat_daily_template_id="daily-template-id",
+        wechat_openid_encryption_key="MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
         public_base_url="https://electricity.example.test",
     )
 

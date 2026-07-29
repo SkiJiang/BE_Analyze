@@ -55,7 +55,8 @@ sudo apt update
 sudo apt install --yes python3.12-venv nginx certbot python3-certbot-nginx sqlite3
 
 sudo install -d -o root -g root -m 0755 /opt/electricity-app
-sudo rsync -a --delete --exclude .venv/ --exclude .env ./backend/ /opt/electricity-app/
+sudo rsync -a --delete --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r \
+  --exclude .venv/ --exclude .env ./backend/ /opt/electricity-app/
 sudo python3.12 -m venv /opt/electricity-app/.venv
 sudo /opt/electricity-app/.venv/bin/pip install /opt/electricity-app
 

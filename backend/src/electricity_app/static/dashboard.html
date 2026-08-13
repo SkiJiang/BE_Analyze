@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0b1220">
-  <title>家庭用电分析</title>
+  <meta name="theme-color" content="#0f766e">
+  <title>宿舍电费可视化</title>
   <link rel="stylesheet" href="/static/app.css">
   <script defer src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
   <script defer src="/static/app.js"></script>
@@ -12,9 +12,9 @@
 <body>
   <div class="page-canvas">
     <header class="page-header">
-      <div>
-        <p class="eyebrow">家庭能源助手</p>
-        <h1>用电概览</h1>
+      <div class="brand-lockup">
+        <p class="eyebrow">805 宿舍</p>
+        <h1>宿舍电费可视化</h1>
       </div>
       <p id="last-sync" class="sync-text" aria-live="polite">正在读取同步时间…</p>
     </header>
@@ -27,20 +27,24 @@
     <p id="chart-error" class="chart-error" role="status" hidden></p>
 
     <main id="dashboard" aria-busy="true">
-      <section class="summary-grid" aria-label="今日用电摘要">
-        <article id="balance-card" class="summary-card">
+      <article id="balance-card" class="balance-card" aria-label="账户余额">
+        <div>
           <p class="card-label">账户余额</p>
-          <p id="balance-value" class="card-value" aria-live="polite">加载中…</p>
-        </article>
-        <article id="today-energy-card" class="summary-card">
+          <p id="balance-value" class="balance-value" aria-live="polite">加载中…</p>
+        </div>
+        <p class="balance-hint">余额会随下一次物业同步更新</p>
+      </article>
+
+      <section class="overview" aria-label="今日用电摘要">
+        <article id="today-energy-card" class="summary-card metric-card">
           <p class="card-label">今日用电</p>
           <p id="today-energy-value" class="card-value" aria-live="polite">加载中…</p>
         </article>
-        <article id="today-cost-card" class="summary-card">
+        <article id="today-cost-card" class="summary-card metric-card cost-card">
           <p class="card-label">今日电费</p>
           <p id="today-cost-value" class="card-value" aria-live="polite">加载中…</p>
         </article>
-        <article id="estimated-days-card" class="summary-card">
+        <article id="estimated-days-card" class="summary-card metric-card">
           <p class="card-label">预计可用</p>
           <p id="estimated-days-value" class="card-value" aria-live="polite">加载中…</p>
         </article>
@@ -49,8 +53,8 @@
       <section class="panel trend-panel" aria-labelledby="trend-heading">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">趋势</p>
-            <h2 id="trend-heading">用电变化</h2>
+            <p class="eyebrow">用电趋势</p>
+            <h2 id="trend-heading">最近的用电变化</h2>
           </div>
           <div class="range-controls" role="group" aria-label="选择趋势时间范围">
             <button class="range-button is-active" type="button" data-range="24h" aria-pressed="true">24 小时</button>
@@ -69,10 +73,10 @@
         <p id="recent-mean-comparison" class="comparison-text" aria-live="polite">正在计算近 7 日均值对比…</p>
       </section>
 
-      <section class="panel" aria-labelledby="hourly-heading">
+      <section class="panel distribution-panel" aria-labelledby="hourly-heading">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">分布</p>
+            <p class="eyebrow">今日分布</p>
             <h2 id="hourly-heading">今日小时用电</h2>
           </div>
         </div>
@@ -81,11 +85,11 @@
         <p id="typical-peak-text" class="comparison-text" aria-live="polite">正在计算历史典型高峰…</p>
       </section>
 
-      <section class="panel" aria-labelledby="anomaly-heading">
+      <section class="panel anomaly-panel" aria-labelledby="anomaly-heading">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">提醒</p>
-            <h2 id="anomaly-heading">异常观察</h2>
+            <p class="eyebrow">用电提醒</p>
+            <h2 id="anomaly-heading">需要留意的情况</h2>
           </div>
         </div>
         <ul id="anomaly-list" class="anomaly-list" aria-live="polite">
@@ -93,11 +97,11 @@
         </ul>
       </section>
 
-      <section class="panel" aria-labelledby="detail-heading">
+      <section class="panel detail-panel" aria-labelledby="detail-heading">
         <div class="section-heading detail-heading">
           <div>
-            <p class="eyebrow">明细</p>
-            <h2 id="detail-heading">按日查看</h2>
+            <p class="eyebrow">用电明细</p>
+            <h2 id="detail-heading">按日期查看</h2>
           </div>
           <label class="date-control" for="detail-date">
             <span class="sr-only">选择明细日期</span>

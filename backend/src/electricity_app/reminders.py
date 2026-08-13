@@ -37,8 +37,10 @@ class DailyReminderService:
         )
         self._timezone = ZoneInfo(settings.timezone)
 
-    def send_today(self, now: datetime | None = None) -> int:
-        """Send current data once per recipient, returning successful deliveries."""
+    def send_today(
+        self, now: datetime | None = None, *, force: bool = False
+    ) -> int:
+        """Send the current summary, optionally bypassing same-day delivery checks."""
         local_now = (now or datetime.now(self._timezone)).astimezone(self._timezone)
         summary = self._analytics.dashboard(local_now)
         if summary.is_stale:
@@ -59,7 +61,9 @@ class DailyReminderService:
         }
         sent = 0
         for openid_hmac, ciphertext in self._database.list_reminder_recipients():
-            if self._database.reminder_was_sent(local_now.date(), openid_hmac):
+            if not force and self._database.reminder_was_sent(
+                local_now.date(), openid_hmac
+            ):
                 continue
             try:
                 openid = self._cipher.decrypt(ciphertext.encode()).decode()

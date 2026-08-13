@@ -65,8 +65,8 @@ def test_scheduler_adds_daily_template_reminder(sync_service, analytics_service)
     job = scheduler.get_job("daily_reminder")
 
     assert job is not None
-    assert "hour='20'" in str(job.trigger)
-    assert "minute='0'" in str(job.trigger)
+    assert "hour='23'" in str(job.trigger)
+    assert "minute='30'" in str(job.trigger)
     assert job.func == reminder_service.send_today
 
 

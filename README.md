@@ -1,369 +1,440 @@
-# 园区电量分析 H5
+# 园区电表分析与微信通知服务
 
-这是一个部署在 Ubuntu 服务器上的只读电量分析服务。它从已获授权的物业接口读取单个房间/电表数据，写入 SQLite，自动计算电量、费用和余额趋势，并通过微信公众号菜单打开 H5 仪表盘。
+这是一个针对**单个已授权房间和电表**的只读用电分析服务。它从物业平台拉取电表明细，保存到本机 SQLite 数据库，生成用电统计，并通过微信公众号为获准用户提供仪表盘和每日模板消息。
 
-服务启动后会立即同步一次数据，随后在每小时的 `00`、`30` 分钟执行同步；每天 `02:15` 做一次近 30 天数据补偿。服务不包含小程序前端，也不发送主动消息。
+项目部署在 Ubuntu 服务器上。FastAPI 应用只监听本机回环地址，由 Nginx 负责 HTTPS 和公网访问；所有物业账户、微信密钥和会话密钥均保存在服务器的环境文件中，不应写入仓库。
 
-## 目录与每个文件的作用
+## 功能概览
+
+- 定时采集指定房间、指定电表的用电明细、费用、费率和余额。
+- 将原始记录、余额快照、同步历史、日汇总及微信授权状态保存在 SQLite。
+- 每 30 分钟刷新最近两天的数据，每日回补最近 30 天，减少物业平台延迟或临时故障造成的数据缺口。
+- 提供微信内 H5 仪表盘，展示余额、当日与历史用电、费用、峰值、趋势、异常和数据新鲜度。
+- 使用微信网页授权和管理员白名单控制访问者；未获批准的用户无法查看仪表盘或接收通知。
+- 每日 `23:30`（`Asia/Shanghai`）向已授权接收者发送一条用电摘要模板消息。
+- 提供命令行管理工具，用于批准接收者、排障、按日同步、查看汇总和手动重发通知。
+
+## 运行架构
 
 ```text
-BE_Analyze/
-├── .gitignore
-├── README.md
+物业电表平台
+    |
+    | HTTPS 登录和明细查询
+    v
+PropertyClient -> SyncService -> SQLite 数据库 <- AnalyticsService
+                                      |                 |
+                                      |                 +-> H5 / JSON API
+                                      |
+微信 OAuth <-> FastAPI/Uvicorn <-> Nginx/HTTPS <-> 微信用户
+                                      |
+                                      +-> 微信模板消息 API
+```
+
+生产进程由 `systemd` 维护：
+
+```text
+Nginx (80/443)
+  -> Uvicorn/FastAPI (127.0.0.1:8000)
+      -> APScheduler
+          -> 电表同步任务
+          -> 每日微信通知任务
+```
+
+服务以低权限 `electricity` 用户运行。源码目录为 `/opt/electricity-app`，运行时数据库目录为 `/var/lib/electricity-app`，敏感环境变量文件为 `/etc/electricity-app/electricity.env`。
+
+## 目录结构
+
+```text
+/opt/electricity-app/
+├── README.md                         本文档
+├── .git/                             Git 元数据
 └── backend/
-    ├── .env.example
-    ├── pyproject.toml
-    ├── deploy/electricity-app.service
+    ├── .env.example                  环境变量示例，不含真实密钥
+    ├── pyproject.toml                Python 包、依赖和 CLI 入口
+    ├── uv.lock                       锁定的 Python 依赖
+    ├── deploy/
+    │   └── electricity-app.service   systemd 服务单元模板
     ├── src/electricity_app/
-    └── tests/
+    │   ├── main.py                   FastAPI 应用组装与生命周期
+    │   ├── config.py                 环境变量读取与校验
+    │   ├── property_client.py        物业接口认证和数据抓取
+    │   ├── sync_service.py           同步、失败记录和认证熔断
+    │   ├── db.py                     SQLite schema 与持久化
+    │   ├── analytics.py              用电、费用与趋势统计
+    │   ├── scheduler.py              APScheduler 定时任务
+    │   ├── reminders.py              每日模板消息编排
+    │   ├── wechat_template.py        微信 access token 与模板消息调用
+    │   ├── web.py                    OAuth、H5/API、健康检查
+    │   ├── cli.py                    electricity-admin 管理命令
+    │   └── static/                   仪表盘 HTML、CSS、JavaScript
+    └── tests/                        单元、接口和浏览器测试
 ```
 
-### 仓库根目录
+## 数据采集与同步
 
-| 文件 | 作用 |
-| --- | --- |
-| `.gitignore` | 排除真实环境变量、SQLite 数据库、虚拟环境、缓存和日志，防止敏感信息进入 Git。 |
-| `README.md` | 本文档：说明仓库结构和服务器部署流程。 |
+### 采集范围
 
-### 后端配置与部署文件
+应用不尝试抓取物业账户下的所有设备。每条记录都会校验房间名称和电表名称，必须分别与 `PROPERTY_ROOM_NAME` 和 `PROPERTY_DEVICE_NAME` 完全匹配。发现范围不匹配、字段缺失或数值非法时，同步失败而不会将异常数据写入分析结果。
 
-| 文件 | 作用 |
-| --- | --- |
-| `backend/.env.example` | 环境变量示例。部署时参考它创建服务器上的 `/etc/electricity-app/electricity.env`；不要在仓库内创建或提交真实 `.env`。 |
-| `backend/pyproject.toml` | Python 包定义、固定依赖版本、测试依赖、`electricity-admin` 命令入口，以及 H5 静态资源打包规则。 |
-| `backend/deploy/electricity-app.service` | 唯一的 systemd 服务单元。以低权限 `electricity` 用户运行 Uvicorn，仅监听 `127.0.0.1:8000`，并由 systemd 创建数据库目录。 |
+物业客户端采用 HTTPS，登录获得的物业 token 只在当前进程内存中保存。明细查询支持分页，单次查询最多 100 页；网络或服务端临时错误会有限次数重试。若 token 失效，会重新登录一次再重试请求。
 
-### 后端运行源码
+### 定时任务
 
-| 文件 | 作用 |
-| --- | --- |
-| `backend/src/electricity_app/__init__.py` | Python 包标记文件。 |
-| `analytics.py` | 计算今日/昨日用电、费用、余额、7/30 天趋势、峰值、异常和数据陈旧状态。 |
-| `cli.py` | `electricity-admin` 管理命令：初始化数据库、查看/批准微信授权、探测物业字段、按日期同步和输出某日汇总。 |
-| `config.py` | 读取并校验环境变量；强制物业接口和公网地址使用 HTTPS，并限制会话、Token 等敏感配置。 |
-| `db.py` | SQLite 表初始化、采集记录写入、余额快照、汇总数据、同步状态、OAuth nonce 与微信授权白名单读写。 |
-| `domain.py` | 电量记录、同步结果、仪表盘统计等不可变数据结构。 |
-| `main.py` | 组装 FastAPI、数据库、物业客户端、分析服务、调度器、Cookie 会话与敏感日志脱敏规则。 |
-| `property_client.py` | 已授权物业接口的 HTTPS 调用、字段识别、数据解析和认证错误识别。 |
-| `scheduler.py` | 应用内 APScheduler：启动同步、每 30 分钟同步和每日补偿同步；避免重叠运行。 |
-| `sync_service.py` | 调用物业客户端、写入原始记录和同步结果，并在认证异常时暂停后续采集。 |
-| `web.py` | 微信消息回调校验、网页 OAuth、H5 授权、仪表盘 API、健康检查和日志查询参数脱敏。 |
+所有时间均为 `Asia/Shanghai`：
 
-### H5 静态资源
+| 时间 | 任务 | 行为 |
+| --- | --- | --- |
+| 应用启动后 | 启动同步 | 同步昨天和今天的数据。 |
+| 每小时 `00`、`30` 分 | `sync_recent` | 同步昨天和今天，处理跨天记录和延迟入账。 |
+| 每日 `02:15` | `reconcile_30_days` | 重新同步最近 30 天，回补历史数据。 |
+| 每日 `23:30` | `daily_reminder` | 向已完整授权的用户发送当天摘要。 |
 
-| 文件 | 作用 |
-| --- | --- |
-| `backend/src/electricity_app/static/dashboard.html` | 电量仪表盘的唯一 HTML 页面。 |
-| `backend/src/electricity_app/static/app.css` | H5 页面布局、移动端适配和图表卡片样式。 |
-| `backend/src/electricity_app/static/app.js` | 请求仪表盘 API、渲染统计数字和 ECharts 图表；遇到未授权状态时跳转至微信 OAuth。 |
+同步任务之间使用进程内锁避免重叠执行。调度任务设置 `max_instances=1`、合并错过的任务，并允许 15 分钟的启动延迟容错。
 
-### 自动化测试
+### 失败与认证熔断
 
-| 文件 | 作用 |
-| --- | --- |
-| `backend/tests/conftest.py` | 共享测试配置、临时数据库和模拟物业客户端。 |
-| `backend/tests/fixtures/property_details.json` | 脱敏的物业接口响应样本。 |
-| `backend/tests/test_analytics.py` | 验证电量、费用、趋势、峰值、异常和陈旧判断。 |
-| `backend/tests/test_cli.py` | 验证管理命令输出、同步、授权批准和参数错误处理。 |
-| `backend/tests/test_config.py` | 验证环境变量格式、HTTPS 和敏感配置约束。 |
-| `backend/tests/test_db.py` | 验证 SQLite 迁移、写入、查询、汇总和授权白名单。 |
-| `backend/tests/test_frontend_browser.py` | 在浏览器环境中验证 H5 页面加载、图表数据和未授权跳转。 |
-| `backend/tests/test_property_client.py` | 验证物业接口请求、房间/电表筛选、字段兼容和认证错误。 |
-| `backend/tests/test_scheduler.py` | 验证启动同步、30 分钟调度、补偿任务及应用生命周期。 |
-| `backend/tests/test_sync_service.py` | 验证同步写入、失败处理和认证暂停逻辑。 |
-| `backend/tests/test_web.py` | 验证微信消息签名、OAuth、授权白名单、H5/API 路由和健康检查。 |
+同步结果会记录为 `success`、`failed` 或 `auth_required`。
 
-## 服务器部署（Ubuntu 24.04）
+- 网络错误、协议变化或数据格式错误记录为 `failed`，之后的定时任务仍可再次尝试。
+- 物业账号密码或 token 被拒绝时记录为 `auth_required`，并激活认证熔断标记，后续同步不会持续尝试登录。
+- 管理员确认物业账号已恢复后，运行 `reset-property-auth` 清除熔断，再重启服务或等待下一轮同步。
 
-以下步骤假设：
+## 数据库与统计口径
 
-- 域名已解析到服务器公网 IP；
-- 云防火墙/安全组已放通 TCP `80`、`443`；
-- 已获物业/开发方授权，只接入指定账户；
-- 以可执行 `sudo` 的服务器管理员账户操作。
+默认数据库位置由 `DATABASE_PATH` 指定，生产环境通常为：
 
-文中 `<domain>` 必须替换成实际域名；填写域名时不要包含 `https://` 或路径。
-
-### 1. 安装系统依赖并创建服务用户
-
-```bash
-sudo apt update
-sudo apt install --yes git nginx certbot python3-certbot-nginx sqlite3 curl rsync
-
-sudo useradd --system \
-  --home-dir /var/lib/electricity-app \
-  --shell /usr/sbin/nologin \
-  electricity
+```text
+/var/lib/electricity-app/electricity.db
 ```
 
-若 `electricity` 用户已存在，第二条命令会报错；可跳过它。
+数据库中的主要表：
 
-### 2. 下载代码并安装 Python 依赖
+| 表 | 用途 |
+| --- | --- |
+| `electricity_records` | 物业返回的原始电表明细，以物业记录 ID 或内容哈希去重。 |
+| `balance_snapshots` | 每次同步观测到的最新余额快照。 |
+| `sync_runs` | 每次同步的时间、范围、状态、抓取数、新增数、更新数和安全错误码。 |
+| `daily_summaries` | 按自然日重建的总电量、总费用、记录数、峰值和异常基线。 |
+| `wechat_allowlist` | 微信用户的 HMAC 标识、加密 OpenID、启用状态和申请编号。 |
+| `daily_reminder_deliveries` | 每位接收者每天的正常推送去重记录。 |
+| `oauth_nonces` | 五分钟有效的一次性微信 OAuth 状态值摘要。 |
+| `runtime_state` | 当前运行状态，例如物业认证熔断。 |
 
-```bash
-sudo git clone https://github.com/SkiJiang/BE_Analyze.git /opt/electricity-app
-sudo chown -R root:root /opt/electricity-app
-sudo find /opt/electricity-app -type d -exec chmod 0755 {} +
-sudo find /opt/electricity-app -type f -exec chmod 0644 {} +
+统计服务按半小时聚合数据，并在仪表盘中计算：
 
-curl -LsSf https://astral.sh/uv/install.sh | sh
-sudo install -m 0755 /root/.local/bin/uv /usr/local/bin/uv
-sudo /usr/local/bin/uv sync --project /opt/electricity-app/backend --locked
+- 当前余额、当日用电量与费用；
+- 昨日用电量及当日环比；
+- 近 24 小时、7 天和 30 天的趋势与费用；
+- 最近完整日的平均用电、历史典型高峰时段和预计可用天数；
+- 当天峰值半小时区间、按小时分布、最近 48 个半小时桶；
+- 历史异常提示；
+- 最近成功同步时间及数据是否陈旧。
+
+当距最近一次成功同步超过 `STALE_AFTER_MINUTES`（当前实现固定为 90 分钟）时，数据被标记为陈旧。每日通知会在数据陈旧时跳过，以避免推送错误信息。
+
+## Web 与微信授权
+
+### HTTP 路由
+
+| 路由 | 用途 | 权限 |
+| --- | --- | --- |
+| `GET /wechat/message` | 微信公众平台 URL 验证。 | 微信签名校验。 |
+| `POST /wechat/message` | 接收微信服务器回调，目前仅返回成功。 | 无业务处理。 |
+| `GET /wechat/entry` | 发起微信网页授权。 | 公开入口。 |
+| `GET /wechat/callback` | 校验 OAuth state，交换 code 并建立会话。 | 微信 OAuth 回调。 |
+| `GET /dashboard` | 仪表盘页面。 | 已批准用户。 |
+| `GET /api/dashboard` | 仪表盘汇总 JSON。 | 已批准用户。 |
+| `GET /api/day/{YYYY-MM-DD}` | 指定日期的半小时明细 JSON。 | 已批准用户。 |
+| `GET /health/live` | 进程存活检查。 | 公开。 |
+| `GET /health/ready` | 数据库、物业认证和数据新鲜度检查。 | 公开。 |
+
+`/health/ready` 的含义：
+
+- `200 {"status":"ready"}`：数据库可用，且没有已知的认证阻断。
+- `200 {"status":"degraded"}`：服务可用，但已有成功同步且数据超过 90 分钟未更新。
+- `503 {"status":"auth_required"}`：物业认证失败，等待管理员恢复认证。
+- `503 {"status":"not_ready"}`：SQLite 无法正常读取。
+
+### 授权与接收者流程
+
+新用户必须在微信中访问：
+
+```text
+https://<你的域名>/wechat/entry
 ```
 
-代码目录由 `root` 持有；应用运行用户只需要读取源码和进入目录的权限。
+流程如下：
 
-### 3. 创建生产环境变量文件
-
-真实配置只放在 `/etc/electricity-app/electricity.env`：
-
-```bash
-sudo install -d -o root -g root -m 0750 /etc/electricity-app
-sudo install -o root -g root -m 0600 /dev/null /etc/electricity-app/electricity.env
-sudoedit /etc/electricity-app/electricity.env
+```text
+用户访问入口
+  -> 微信 OAuth
+  -> 未获批准：写入待审批名单并返回 request_id
+  -> 管理员 enable-wechat <request_id>
+  -> 用户再次访问入口
+  -> 保存加密 OpenID，建立会话，可访问仪表盘和接收消息
 ```
 
-在编辑器中填入以下内容。`REPLACE_ME` 必须替换为真实值，但不要将真实值提交到 Git、截图或聊天记录中。
+OpenID 不以明文索引保存：数据库中以 HMAC 作为身份标识；只有获批准用户再次完成授权时，才会将其 OpenID 用 Fernet 加密后保存，用于发送模板消息。OAuth `state` 同时受签名、五分钟过期、浏览器 session 和一次性数据库 nonce 保护。
+
+## 微信每日通知
+
+每天 `23:30`，服务会向已启用且已保存加密 OpenID 的接收者发送模板消息，内容包括：
+
+- 电表/房间名称；
+- 当前日期；
+- 当日用电量和费用；
+- 最新余额；
+- 近 7 天用电量；
+- 最近成功同步时间；
+- 打开仪表盘的链接。
+
+普通定时推送按“日期 + 接收者”去重。同一位用户当天已经收到过自动消息，下一次自动任务不会再发。管理员手动执行 `--force` 可明确绕过此限制，用于补发或验证模板消息；它不会删除任何历史投递记录。
+
+## 配置
+
+生产配置位于：
+
+```text
+/etc/electricity-app/electricity.env
+```
+
+参考 [`backend/.env.example`](backend/.env.example) 创建，真实值不得提交到 Git。示例：
 
 ```dotenv
-PROPERTY_BASE_URL=https://物业接口域名
+PROPERTY_BASE_URL=https://property.example.com
 PROPERTY_USERNAME=REPLACE_ME
 PROPERTY_PASSWORD=REPLACE_ME
 PROPERTY_ROOM_NAME=REPLACE_ME
 PROPERTY_DEVICE_NAME=REPLACE_ME
 
 DATABASE_PATH=/var/lib/electricity-app/electricity.db
-SESSION_SECRET=至少32位随机字符串
+SESSION_SECRET=REPLACE_WITH_AT_LEAST_32_CHARACTERS
 SESSION_MAX_AGE_SECONDS=1800
-OPENID_HMAC_KEY=至少32位随机字符串
+OPENID_HMAC_KEY=REPLACE_WITH_AT_LEAST_32_CHARACTERS
 
-WECHAT_APP_ID=REPLACE_ME
+WECHAT_APP_ID=wx0000000000000000
 WECHAT_APP_SECRET=REPLACE_ME
+WECHAT_MESSAGE_TOKEN=REPLACE_WITH_AT_LEAST_16_CHARACTERS
 WECHAT_DAILY_TEMPLATE_ID=REPLACE_ME
-WECHAT_OPENID_ENCRYPTION_KEY=REPLACE_ME
-WECHAT_MESSAGE_TOKEN=至少16位随机字符串
-PUBLIC_BASE_URL=https://<domain>
+WECHAT_OPENID_ENCRYPTION_KEY=REPLACE_WITH_A_FERNET_KEY
+PUBLIC_BASE_URL=https://electricity.example.com
 
 TIMEZONE=Asia/Shanghai
 STALE_AFTER_MINUTES=90
 ```
 
-生成两个独立的 32 字节随机密钥可使用：
-
-```bash
-openssl rand -hex 32
-```
-
-保存后确认环境文件没有被普通用户读取：
-
-```bash
-sudo stat -c '%a %U:%G %n' /etc/electricity-app/electricity.env
-# 预期：600 root:root /etc/electricity-app/electricity.env
-```
-
-### 4. 安装并启动 systemd 服务
-
-```bash
-sudo install -o root -g root -m 0644 \
-  /opt/electricity-app/backend/deploy/electricity-app.service \
-  /etc/systemd/system/electricity-app.service
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now electricity-app
-sudo systemctl status electricity-app --no-pager
-```
-
-服务首次启动会创建 `/var/lib/electricity-app` 并初始化数据库。应用只会监听本机环回地址，不能直接用公网 IP 加端口访问。
-
-检查本机健康状态：
-
-```bash
-curl -fsS http://127.0.0.1:8000/health/live
-sudo ss -lntp | grep 8000
-```
-
-预期健康检查返回 `{"status":"live"}`，监听地址为 `127.0.0.1:8000`。
-
-### 5. 配置 Nginx 反向代理
-
-创建 `/etc/nginx/sites-available/electricity-app`：
-
-```nginx
-server {
-    listen 80;
-    server_name <domain>;
-
-    client_max_body_size 1m;
-    proxy_connect_timeout 5s;
-    proxy_read_timeout 60s;
-    proxy_send_timeout 60s;
-
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-
-    # OAuth code/state 和公众号签名参数不写入访问日志。
-    location = /wechat/callback {
-        access_log off;
-        proxy_pass http://127.0.0.1:8000;
-    }
-
-    location = /wechat/message {
-        access_log off;
-        proxy_pass http://127.0.0.1:8000;
-    }
-
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-    }
-}
-```
-
-启用站点并检查语法：
-
-```bash
-sudo ln -sf /etc/nginx/sites-available/electricity-app /etc/nginx/sites-enabled/electricity-app
-sudo nginx -t
-sudo systemctl reload nginx
-```
-
-### 6. 申请 HTTPS 证书
-
-在 DNS 已生效且 80 端口可访问的情况下执行：
-
-```bash
-sudo certbot --nginx -d <domain>
-sudo systemctl reload nginx
-curl -fsS https://<domain>/health/live
-```
-
-Certbot 会自动在 Nginx 配置中加入证书和 HTTP→HTTPS 跳转。之后微信接口、网页授权和自定义菜单都使用 `https://<domain>`。
-
-### 7. 配置微信测试公众号
-
-在微信测试号管理页填写：
-
-| 配置项 | 填写内容 |
+| 变量 | 说明 |
 | --- | --- |
-| 接口 URL | `https://<domain>/wechat/message` |
-| 接口 Token | 与 `WECHAT_MESSAGE_TOKEN` 完全一致 |
-| 网页授权域名 | `<domain>` |
-| JS 接口安全域名 | `<domain>`（仅在后续使用微信 JS-SDK 时需要） |
-| 自定义菜单“电量分析” | `https://<domain>/wechat/entry` |
+| `PROPERTY_BASE_URL` | 已授权物业平台的 HTTPS 基础地址。 |
+| `PROPERTY_USERNAME` / `PROPERTY_PASSWORD` | 物业平台登录凭据。 |
+| `PROPERTY_ROOM_NAME` / `PROPERTY_DEVICE_NAME` | 允许采集的精确房间与电表名称。 |
+| `DATABASE_PATH` | SQLite 数据库绝对路径。 |
+| `SESSION_SECRET` | Web 会话签名密钥，至少 32 字符。 |
+| `SESSION_MAX_AGE_SECONDS` | 登录 session 有效期，范围 300 到 3600 秒。 |
+| `OPENID_HMAC_KEY` | 生成 OpenID HMAC 标识的密钥，至少 32 字符。 |
+| `WECHAT_APP_ID` / `WECHAT_APP_SECRET` | 微信公众平台应用凭据。 |
+| `WECHAT_MESSAGE_TOKEN` | 微信服务器回调校验 token，至少 16 字符。 |
+| `WECHAT_DAILY_TEMPLATE_ID` | 每日摘要的模板消息 ID。 |
+| `WECHAT_OPENID_ENCRYPTION_KEY` | Fernet 密钥，用于加密保存授权接收者 OpenID。 |
+| `PUBLIC_BASE_URL` | 用户访问的 HTTPS 公网根地址，必须与微信授权域名一致。 |
+| `TIMEZONE` | 当前仅支持 `Asia/Shanghai`。 |
+| `STALE_AFTER_MINUTES` | 数据陈旧阈值，当前实现限定为 90。 |
 
-“网页授权域名”位于 **网页账号 → 获取授权用户基本信息 → 修改**。它不是接口 URL；只填写裸域名，否则会出现 `redirect_uri` 域名不一致（10003）。
-
-测试用户先关注测试号，再点击“电量分析”菜单。首次访问会出现：
-
-```json
-{"detail":"authorization pending","request_id":1}
-```
-
-管理员通过临时 systemd 服务读取 root 权限环境文件并批准对应请求：
-
-```bash
-sudo systemd-run --quiet --wait --pipe --collect \
-  --property=User=electricity \
-  --property=Group=electricity \
-  --property=WorkingDirectory=/opt/electricity-app/backend \
-  --property=EnvironmentFile=/etc/electricity-app/electricity.env \
-  /usr/local/bin/uv run --project /opt/electricity-app/backend --no-sync electricity-admin list-pending
-
-sudo systemd-run --quiet --wait --pipe --collect \
-  --property=User=electricity \
-  --property=Group=electricity \
-  --property=WorkingDirectory=/opt/electricity-app/backend \
-  --property=EnvironmentFile=/etc/electricity-app/electricity.env \
-  /usr/local/bin/uv run --project /opt/electricity-app/backend --no-sync electricity-admin enable-wechat <request_id>
-```
-
-批准后重新打开菜单即可进入 H5 仪表盘。撤销某个用户权限：
+建议权限：
 
 ```bash
-sudo systemd-run --quiet --wait --pipe --collect \
-  --property=User=electricity \
-  --property=Group=electricity \
-  --property=WorkingDirectory=/opt/electricity-app/backend \
-  --property=EnvironmentFile=/etc/electricity-app/electricity.env \
-  /usr/local/bin/uv run --project /opt/electricity-app/backend --no-sync electricity-admin disable-wechat <request_id>
+sudo install -d -o root -g root -m 0750 /etc/electricity-app
+sudo chown root:root /etc/electricity-app/electricity.env
+sudo chmod 0600 /etc/electricity-app/electricity.env
+```
+
+## systemd 与反向代理
+
+服务单元安装路径：
+
+```text
+/etc/systemd/system/electricity-app.service
+```
+
+核心运行参数：
+
+```text
+User=electricity
+WorkingDirectory=/opt/electricity-app/backend
+EnvironmentFile=/etc/electricity-app/electricity.env
+ExecStart=/usr/local/bin/uv run --project /opt/electricity-app/backend --no-sync \
+  uvicorn electricity_app.main:app --host 127.0.0.1 --port 8000 --workers 1 \
+  --proxy-headers --forwarded-allow-ips=127.0.0.1
+```
+
+服务使用 `PrivateTmp`、`ProtectSystem=strict`、`ProtectHome`、`NoNewPrivileges` 和 `RestrictSUIDSGID` 等隔离选项。不要把 Uvicorn 改成对公网监听；应始终通过 Nginx 提供 TLS。
+
+Nginx 至少应将 `Host`、`X-Forwarded-For` 和 `X-Forwarded-Proto` 转发给本机 `127.0.0.1:8000`。对 `/wechat/callback` 与 `/wechat/message` 建议关闭 Nginx 访问日志，防止 OAuth code、state 或微信签名参数落入日志。
+
+## 管理命令
+
+以下命令使用当前生产环境配置运行。`sudo bash -c` 会在 root shell 中读取权限为 `0600` 的环境文件，然后启动命令；命令本身不会打印密钥。
+
+先定义一个便于复制的命令前缀：
+
+```bash
+sudo bash -c 'set -a; . /etc/electricity-app/electricity.env; set +a; \
+  /usr/local/bin/uv run --project /opt/electricity-app/backend --no-sync electricity-admin <command>'
+```
+
+将 `<command>` 替换为下列内容。
+
+| 命令 | 作用 |
+| --- | --- |
+| `init-db` | 初始化或迁移 SQLite 表结构。 |
+| `list-pending` | 列出待批准微信用户的申请编号和创建时间。 |
+| `enable-wechat <request_id>` | 批准一个申请。用户之后必须再次打开授权入口，才能保存接收消息所需的加密 OpenID。 |
+| `disable-wechat <request_id>` | 禁用对应用户的仪表盘和后续通知权限。 |
+| `send-daily-reminder` | 手动发送今日消息，但跳过当天已成功发送过的接收者。 |
+| `send-daily-reminder --force` | 强制重发给全部有效接收者，忽略当天去重记录。 |
+| `reset-property-auth` | 清除物业认证熔断标记。 |
+| `probe-property-schema` | 请求当日物业数据并输出字段名和必要字段检测结果。 |
+| `sync-date YYYY-MM-DD` | 同步指定自然日；同步失败会返回非零退出码。 |
+| `summarize-date YYYY-MM-DD` | 输出指定日的记录数、总量、费用、余额和半小时桶。 |
+
+常用示例：
+
+```bash
+# 查看待批准用户
+sudo bash -c 'set -a; . /etc/electricity-app/electricity.env; set +a; \
+  /usr/local/bin/uv run --project /opt/electricity-app/backend --no-sync electricity-admin list-pending'
+
+# 批准申请编号 2
+sudo bash -c 'set -a; . /etc/electricity-app/electricity.env; set +a; \
+  /usr/local/bin/uv run --project /opt/electricity-app/backend --no-sync electricity-admin enable-wechat 2'
+
+# 立即重发一条每日摘要
+sudo bash -c 'set -a; . /etc/electricity-app/electricity.env; set +a; \
+  /usr/local/bin/uv run --project /opt/electricity-app/backend --no-sync electricity-admin send-daily-reminder --force'
+
+# 检查指定日期的汇总
+sudo bash -c 'set -a; . /etc/electricity-app/electricity.env; set +a; \
+  /usr/local/bin/uv run --project /opt/electricity-app/backend --no-sync electricity-admin summarize-date 2026-08-13'
 ```
 
 ## 日常运维
 
-### 查看服务和日志
+### 服务状态与日志
 
 ```bash
 sudo systemctl status electricity-app --no-pager
+sudo journalctl -u electricity-app -n 100 --no-pager
 sudo journalctl -u electricity-app -f
-sudo journalctl -u electricity-app -n 100 --no-pager
 ```
 
-### 触发一次立即同步
+### 重启和健康检查
 
-重启应用会在启动后安排一次立即同步：
+重启服务会重新加载代码和环境变量，并在启动后安排一次最近两天的同步：
 
 ```bash
 sudo systemctl restart electricity-app
-sudo journalctl -u electricity-app -n 100 --no-pager
+sudo systemctl is-active electricity-app
+curl -fsS http://127.0.0.1:8000/health/live
+curl -fsS http://127.0.0.1:8000/health/ready
 ```
 
-如物业账号重新登录后需要清除认证暂停状态：
+### 手动恢复物业认证
+
+确认物业账号、密码或接口恢复后：
 
 ```bash
-sudo systemd-run --quiet --wait --pipe --collect \
-  --property=User=electricity \
-  --property=Group=electricity \
-  --property=WorkingDirectory=/opt/electricity-app/backend \
-  --property=EnvironmentFile=/etc/electricity-app/electricity.env \
-  /usr/local/bin/uv run --project /opt/electricity-app/backend --no-sync electricity-admin reset-property-auth
+sudo bash -c 'set -a; . /etc/electricity-app/electricity.env; set +a; \
+  /usr/local/bin/uv run --project /opt/electricity-app/backend --no-sync electricity-admin reset-property-auth'
 sudo systemctl restart electricity-app
 ```
 
-### 查看某日数据
+### 备份和恢复数据库
+
+在修改、迁移或升级前备份数据库。推荐使用 SQLite 在线备份命令：
 
 ```bash
-sudo systemd-run --quiet --wait --pipe --collect \
-  --property=User=electricity \
-  --property=Group=electricity \
-  --property=WorkingDirectory=/opt/electricity-app/backend \
-  --property=EnvironmentFile=/etc/electricity-app/electricity.env \
-  /usr/local/bin/uv run --project /opt/electricity-app/backend --no-sync electricity-admin summarize-date 2026-07-29
+sudo install -d -o root -g root -m 0700 /var/backups/electricity-app
+sudo sqlite3 /var/lib/electricity-app/electricity.db \
+  ".backup '/var/backups/electricity-app/electricity-$(date +%F-%H%M%S).db'"
 ```
 
-### 更新服务器代码
+恢复前先停止服务，并明确指定一个已验证的备份文件：
+
+```bash
+sudo systemctl stop electricity-app
+sudo install -o electricity -g electricity -m 0600 \
+  /var/backups/electricity-app/<backup-file>.db \
+  /var/lib/electricity-app/electricity.db
+sudo systemctl start electricity-app
+```
+
+### 更新代码
+
+更新前请检查工作区状态，避免覆盖本机尚未提交的修改：
 
 ```bash
 cd /opt/electricity-app
-sudo git pull --ff-only origin main
+git status --short
+```
+
+确认工作区可更新后：
+
+```bash
+sudo git -C /opt/electricity-app pull --ff-only origin main
 sudo /usr/local/bin/uv sync --project /opt/electricity-app/backend --locked
 sudo install -o root -g root -m 0644 \
   /opt/electricity-app/backend/deploy/electricity-app.service \
   /etc/systemd/system/electricity-app.service
 sudo systemctl daemon-reload
 sudo systemctl restart electricity-app
-curl -fsS https://<domain>/health/live
+curl -fsS http://127.0.0.1:8000/health/ready
 ```
 
-若新增了 Python 依赖，不使用 `--no-deps` 再执行一次安装：
+## 开发与测试
+
+项目要求 Python 3.12 及以上，依赖由 `uv` 管理。
 
 ```bash
-sudo /usr/local/bin/uv sync --project /opt/electricity-app/backend --locked
+cd /opt/electricity-app/backend
+/usr/local/bin/uv sync --locked --extra test
+/usr/local/bin/uv run pytest
+```
+
+针对本次改动运行相关测试：
+
+```bash
+/usr/local/bin/uv run pytest tests/test_scheduler.py tests/test_reminders.py
+```
+
+开发时可以用独立的临时数据库和测试微信凭据运行应用，禁止直接使用生产环境文件。若需要本地启动：
+
+```bash
+cd /opt/electricity-app/backend
+set -a
+. .env
+set +a
+/usr/local/bin/uv run uvicorn electricity_app.main:app --host 127.0.0.1 --port 8000
 ```
 
 ## 故障排查
 
-| 现象 | 检查与处理 |
-| --- | --- |
-| Nginx 返回 `502 Bad Gateway` | `sudo systemctl status electricity-app --no-pager`，再查看 `journalctl -u electricity-app -n 100 --no-pager`；通常是环境变量缺失、格式错误或服务未启动。 |
-| 微信显示 `10003 redirect_uri` 不一致 | 在“获取授权用户基本信息”的网页授权域名中填写裸域名 `<domain>`。 |
-| 微信显示 `10005` 或无 scope 权限 | 确认测试微信号已关注测试号并位于测试用户列表，重新从自定义菜单进入。 |
-| 页面显示 `authorization pending` | 用 `electricity-admin list-pending` 查看请求号，再运行 `enable-wechat <request_id>`。 |
-| 数据陈旧或没有新记录 | 查看服务日志；确认物业账号可用、房间/设备名称匹配、物业接口可访问。 |
-| 服务无法进入工作目录 | 检查 `/opt/electricity-app` 及其父目录至少为 `0755`，使 `electricity` 用户能读取并进入。 |
+| 现象 | 优先检查项 | 处理建议 |
+| --- | --- | --- |
+| Nginx 返回 `502` | `systemctl status` 和应用日志 | 检查服务是否启动、环境变量是否通过校验、端口是否为 `127.0.0.1:8000`。 |
+| `/health/ready` 返回 `auth_required` | 最近日志和物业账户状态 | 恢复物业凭据后运行 `reset-property-auth`，再重启服务。 |
+| 仪表盘显示数据陈旧 | `sync_runs`、服务日志、物业网络 | 物业接口不可达或同步失败时先处理根因；不要仅靠重启掩盖失败。 |
+| 微信显示 `authorization pending` | `list-pending` 输出 | 批准对应 `request_id`，并让用户再次打开 `/wechat/entry`。 |
+| 已批准用户收不到消息 | 是否已再次授权、模板 ID、微信关注状态、数据是否陈旧 | 用户必须在批准后再次进入授权入口；必要时用 `send-daily-reminder --force` 检查。 |
+| 微信 OAuth 显示 `redirect_uri` 错误 | 微信网页授权域名和 `PUBLIC_BASE_URL` | 两者必须使用同一 HTTPS 域名；授权域名填写裸域名，不包含路径。 |
+| 定时通知未在 23:30 发送 | 服务运行状态、时区和日志 | 确认系统时间与 `Asia/Shanghai`，检查进程启动后是否成功加载 scheduler。 |
+| 物业记录范围不匹配 | `PROPERTY_ROOM_NAME`、`PROPERTY_DEVICE_NAME` | 使用 `probe-property-schema` 核对物业返回字段和名称，避免放宽范围校验。 |
 
 ## 安全要求
 
-- 仅接入已获得书面或明确授权的物业账户和房间。
-- 不提交 `/etc/electricity-app/electricity.env`、本地 `.env`、SQLite 数据库、Token 或密码。
-- 真实密钥若曾出现在截图、聊天、日志或公开仓库中，应立即在对应平台轮换。
-- 服务器只对公网暴露 Nginx 的 80/443；Uvicorn 必须保持 `127.0.0.1:8000` 监听。
+- 只连接已获得明确授权的物业账户、房间和电表。
+- 真实密码、token、OpenID、微信 App Secret、Fernet 密钥和 session 密钥绝不进入 Git、截图、工单或聊天记录。
+- 如密钥曾暴露，应立即在对应的物业或微信平台轮换；仅修改代码不能使已泄露的密钥失效。
+- `electricity.env` 应保持 root 所有、`0600` 权限；数据库和备份也应视为敏感数据。
+- Uvicorn 只监听 `127.0.0.1`，公网只开放 Nginx 的 `80/443`；生产必须使用 HTTPS。
+- OAuth 回调和微信回调的查询参数不应写入代理访问日志。应用自身已对日志中的常见敏感字段做脱敏，但不应依赖日志脱敏代替权限控制。
+- 手动 `--force` 会导致重复消息，仅在明确需要补发或验证时使用。

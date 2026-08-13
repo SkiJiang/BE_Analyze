@@ -38,7 +38,8 @@ def main() -> None:
     disable_wechat = subcommands.add_parser("disable-wechat")
     disable_wechat.add_argument("request_id", type=int)
     subcommands.add_parser("reset-property-auth")
-    subcommands.add_parser("send-daily-reminder")
+    send_daily_reminder = subcommands.add_parser("send-daily-reminder")
+    send_daily_reminder.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
     settings = get_settings()
@@ -71,7 +72,7 @@ def main() -> None:
                 database,
                 analytics,
                 WeChatTemplateClient(settings, http=http),
-            ).send_today()
+            ).send_today(force=args.force)
         print(f"sent={sent}")
         return
     if args.command == "probe-property-schema":

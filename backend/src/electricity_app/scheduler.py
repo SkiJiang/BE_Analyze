@@ -74,8 +74,8 @@ def create_scheduler(
         scheduler.add_job(
             reminder_service.send_today,
             "cron",
-            hour=20,
-            minute=0,
+            hour=23,
+            minute=30,
             id="daily_reminder",
             max_instances=1,
             coalesce=True,

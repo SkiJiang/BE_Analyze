@@ -167,27 +167,27 @@ function chartBaseOption() {
     animation: !reduceMotion,
     animationDuration: reduceMotion ? 0 : 350,
     textStyle: {
-      color: "#667686",
+      color: "#9eabc0",
       fontFamily: 'Inter, "PingFang SC", "Microsoft YaHei", sans-serif',
     },
     grid: { top: 26, right: 12, bottom: 31, left: 45 },
     tooltip: {
       trigger: "axis",
-      backgroundColor: "#ffffff",
-      borderColor: "#b8d7d1",
-      textStyle: { color: "#17222d" },
+      backgroundColor: "#172236",
+      borderColor: "#4e6a69",
+      textStyle: { color: "#f6f8fc" },
     },
     xAxis: {
       type: "category",
-      axisLine: { lineStyle: { color: "#b8c8c7" } },
-      axisLabel: { color: "#667686", hideOverlap: true },
+      axisLine: { lineStyle: { color: "#42516b" } },
+      axisLabel: { color: "#9eabc0", hideOverlap: true },
     },
     yAxis: {
       type: "value",
       name: "kWh",
-      nameTextStyle: { color: "#667686" },
-      splitLine: { lineStyle: { color: "#e3eceb" } },
-      axisLabel: { color: "#667686" },
+      nameTextStyle: { color: "#9eabc0" },
+      splitLine: { lineStyle: { color: "#243047" } },
+      axisLabel: { color: "#9eabc0" },
     },
   };
 }
@@ -206,7 +206,7 @@ function renderTrend(labels, energyValues, costValues) {
     grid: { ...base.grid, right: 48 },
     legend: {
       data: ["用电量", "费用"],
-      textStyle: { color: "#667686" },
+      textStyle: { color: "#9eabc0" },
       top: 0,
     },
     xAxis: { ...base.xAxis, data: labels },
@@ -228,9 +228,9 @@ function renderTrend(labels, energyValues, costValues) {
         smooth: true,
         showSymbol: energyValues.length <= 7,
         symbolSize: 7,
-        lineStyle: { color: "#0f766e", width: 3 },
-        itemStyle: { color: "#0f766e" },
-        areaStyle: { color: "rgba(15, 118, 110, 0.12)" },
+        lineStyle: { color: "#5ee6be", width: 3 },
+        itemStyle: { color: "#5ee6be" },
+        areaStyle: { color: "rgba(94, 230, 190, 0.13)" },
       },
       {
         name: "费用",
@@ -240,8 +240,8 @@ function renderTrend(labels, energyValues, costValues) {
         smooth: true,
         showSymbol: costValues.length <= 7,
         symbolSize: 7,
-        lineStyle: { color: "#d99016", width: 2 },
-        itemStyle: { color: "#d99016" },
+        lineStyle: { color: "#f4bd5b", width: 2 },
+        itemStyle: { color: "#f4bd5b" },
       },
     ],
   }, true);
@@ -360,14 +360,14 @@ function renderHourly(data) {
     xAxis: {
       ...chartBaseOption().xAxis,
       data: labels,
-      axisLabel: { color: "#667686", interval: 3 },
+      axisLabel: { color: "#9eabc0", interval: 3 },
     },
     series: [{
       name: "用电量",
       type: "bar",
       data: values,
       itemStyle: {
-        color: "#0f766e",
+        color: "#5ee6be",
         borderRadius: [4, 4, 0, 0],
       },
     }],

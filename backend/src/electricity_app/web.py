@@ -25,6 +25,11 @@ import httpx
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from cryptography.fernet import Fernet
 
+from electricity_app.api_transport import (
+    ExternalRequestError,
+    json_object,
+    request_with_retry,
+)
 from electricity_app.analytics import AnalyticsService
 from electricity_app.config import Settings
 from electricity_app.db import Database
@@ -346,8 +351,11 @@ def _exchange_wechat_code(
     code: str,
 ) -> dict[str, Any]:
     try:
-        response = wechat_http.get(
+        response = request_with_retry(
+            wechat_http,
+            "get",
             WECHAT_OAUTH_URL,
+            attempts=3,
             params={
                 "appid": settings.wechat_app_id,
                 "secret": settings.wechat_app_secret.get_secret_value(),
@@ -355,13 +363,20 @@ def _exchange_wechat_code(
                 "grant_type": "authorization_code",
             },
         )
-        response.raise_for_status()
-        payload = response.json()
-    except (httpx.HTTPError, ValueError):
+        if response.status_code >= 400:
+            raise ExternalRequestError(
+                "WeChat authorization failed",
+                code="http_status",
+            )
+        payload = json_object(
+            response,
+            error_message="WeChat authorization failed",
+        )
+    except (ExternalRequestError, httpx.HTTPError, ValueError):
         raise HTTPException(
             status_code=502, detail="WeChat authorization failed"
         )
-    if not isinstance(payload, dict):
+    if payload.get("errcode") not in (None, 0):
         raise HTTPException(
             status_code=502, detail="WeChat authorization failed"
         )

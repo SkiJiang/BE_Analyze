@@ -96,6 +96,22 @@ def test_recent_sync_fetches_today_and_yesterday(fake_client: FakeClient, db: Da
     assert db.count_records() == 2
 
 
+def test_sync_prefers_independent_account_balance(fake_client: FakeClient, db: Database):
+    fake_client.fetch_balance = lambda: Decimal("213.03")
+
+    outcome = SyncService(fake_client, db).sync_dates(
+        date(2026, 7, 29), date(2026, 7, 29)
+    )
+
+    assert outcome.status == "success"
+    assert db.latest_balance() == Decimal("213.03")
+    with sqlite3.connect(db.database_path) as connection:
+        source = connection.execute(
+            "SELECT source FROM balance_snapshots ORDER BY observed_at DESC LIMIT 1"
+        ).fetchone()[0]
+    assert source == "property_balance"
+
+
 def test_failed_sync_keeps_existing_records(failing_client: FailingClient, populated_db: Database):
     before = populated_db.count_records()
 

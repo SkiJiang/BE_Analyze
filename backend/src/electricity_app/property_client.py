@@ -7,11 +7,19 @@ from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 import ssl
 import time
+import re
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
 
+from electricity_app.api_transport import (
+    ExternalRequestError,
+    is_auth_payload,
+    is_tls_error,
+    json_object,
+    request_with_retry,
+)
 from electricity_app.config import Settings
 from electricity_app.domain import ElectricityRecord
 
@@ -49,6 +57,7 @@ class _AuthenticationExpired(RuntimeError):
 class PropertyClient:
     _LOGIN_PATH = "/xboot/auth/login"
     _DETAILS_PATH = "/xboot/goodits/room/pageBalanceDetails"
+    _BALANCE_PATH = "/xboot/goodits/count/getBalance"
     _PAGE_SIZE = 100
     _MAX_PAGES = 100
     _MAX_ATTEMPTS = 3
@@ -138,6 +147,86 @@ class PropertyClient:
             "Property response exceeded the page safety limit",
             code="pagination_overflow",
         )
+
+    def fetch_balance(self) -> Decimal | None:
+        """Fetch the account balance for the configured room."""
+        if self._token is None:
+            self.login()
+
+        reauthenticated = False
+        while True:
+            response = self._request_with_retry(
+                self._BALANCE_PATH,
+                method="get",
+                params={"pageNumber": "1", "pageSize": "100"},
+                headers={"Accesstoken": self._token},
+            )
+            if response.status_code in (401, 403):
+                if reauthenticated:
+                    raise PropertyAuthenticationError(
+                        "Property balance request was rejected after retry"
+                    )
+                self._token = None
+                self.login()
+                reauthenticated = True
+                continue
+
+            payload = self._response_object(response)
+            if self._is_application_auth_failure(payload):
+                if reauthenticated:
+                    raise PropertyAuthenticationError(
+                        "Property balance request was rejected after retry"
+                    )
+                self._token = None
+                self.login()
+                reauthenticated = True
+                continue
+            if payload.get("success") is not True:
+                raise PropertyProtocolError(
+                    "Property balance response was unsuccessful"
+                )
+
+            result = payload.get("result")
+            if not isinstance(result, dict):
+                raise PropertyProtocolError(
+                    "Property balance response has no result object"
+                )
+            records = result.get("records")
+            if not isinstance(records, list) or not all(
+                isinstance(item, dict) for item in records
+            ):
+                raise PropertyProtocolError(
+                    "Property balance response has no records list"
+                )
+
+            matches = [
+                item
+                for item in records
+                if self._room_names_match(
+                    item.get("roomName") or item.get("roomNo")
+                )
+            ]
+            if len(matches) != 1:
+                raise PropertyProtocolError(
+                    "Property balance response did not identify one configured room",
+                    code="balance_scope_mismatch",
+                )
+            balance_text = self._optional_text(matches[0].get("powerMoney"))
+            if balance_text is None:
+                return None
+            try:
+                balance = Decimal(balance_text.strip())
+            except InvalidOperation as exc:
+                raise PropertyProtocolError(
+                    "Property balance is not a valid decimal",
+                    code="invalid_balance",
+                ) from exc
+            if not balance.is_finite():
+                raise PropertyProtocolError(
+                    "Property balance is not finite",
+                    code="invalid_balance",
+                )
+            return balance
 
     def _fetch_page(self, day: date, page_number: int) -> dict[str, object]:
         if self._token is None:
@@ -250,45 +339,38 @@ class PropertyClient:
     def _request_with_retry(
         self,
         path: str,
+        *,
+        method: str = "post",
         **kwargs: Any,
     ) -> httpx.Response:
-        for attempt in range(self._MAX_ATTEMPTS):
-            try:
-                response = self._http.post(path, **kwargs)
-            except httpx.RequestError as exc:
-                if attempt + 1 < self._MAX_ATTEMPTS:
-                    self._sleep(
-                        self._RETRY_BASE_SECONDS * (2**attempt)
-                    )
-                    continue
-                code = "tls" if self._is_tls_error(exc) else "network"
-                raise PropertyUnavailableError(
-                    "Property request transport failed",
-                    code=code,
-                ) from exc
-            if response.status_code < 500:
-                return response
-            if attempt + 1 < self._MAX_ATTEMPTS:
-                self._sleep(self._RETRY_BASE_SECONDS * (2**attempt))
-                continue
-            raise PropertyUnavailableError(
-                "Property service is unavailable",
-                code="upstream_5xx",
+        try:
+            return request_with_retry(
+                self._http,
+                method,
+                path,
+                attempts=self._MAX_ATTEMPTS,
+                retry_base_seconds=self._RETRY_BASE_SECONDS,
+                sleep=self._sleep,
+                **kwargs,
             )
-        raise AssertionError("unreachable")
+        except ExternalRequestError as error:
+            raise PropertyUnavailableError(
+                "Property request transport failed",
+                code=error.code,
+            ) from error
 
     @staticmethod
     def _response_object(response: httpx.Response) -> dict[str, object]:
         try:
-            payload: Any = response.json()
-        except ValueError as exc:
+            return json_object(
+                response,
+                error_message="Property service returned invalid JSON",
+            )
+        except ExternalRequestError as exc:
             raise PropertyProtocolError(
                 "Property service returned invalid JSON",
                 code="invalid_json",
             ) from exc
-        if not isinstance(payload, dict):
-            raise PropertyProtocolError("Property service returned a non-object response")
-        return payload
 
     @staticmethod
     def _required_text(item: dict[str, object], field: str) -> str:
@@ -342,36 +424,24 @@ class PropertyClient:
 
     @staticmethod
     def _is_tls_error(error: BaseException) -> bool:
-        current: BaseException | None = error
-        seen: set[int] = set()
-        while current is not None and id(current) not in seen:
-            seen.add(id(current))
-            if isinstance(current, ssl.SSLError):
-                return True
-            current = current.__cause__ or current.__context__
-        return False
+        return is_tls_error(error)
 
     @staticmethod
     def _is_application_auth_failure(payload: dict[str, object]) -> bool:
-        code = str(payload.get("code", "")).lower()
-        if code in {"401", "403", "unauthorized", "forbidden", "token_expired"}:
-            return True
-        message = " ".join(
-            str(payload.get(key, "")) for key in ("message", "msg", "error")
-        ).lower()
-        return any(
-            marker in message
-            for marker in (
-                "token",
-                "auth",
-                "login",
-                "登录",
-                "令牌",
-                "认证",
-                "鉴权",
-            )
-        )
+        return is_auth_payload(payload)
 
     @staticmethod
     def _origin(url: httpx.URL) -> tuple[str, str, int | None]:
         return url.scheme, url.host, url.port
+
+    def _room_names_match(self, value: object) -> bool:
+        if value is None:
+            return False
+        return self._normalize_room_name(str(value)) == self._normalize_room_name(
+            self._settings.property_room_name
+        )
+
+    @staticmethod
+    def _normalize_room_name(value: str) -> str:
+        normalized = re.sub(r"\s+", "", value).casefold()
+        return re.sub(r"-(?:\d+f|\d+层)(?=-|$)", "", normalized)

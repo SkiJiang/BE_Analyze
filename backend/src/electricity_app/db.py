@@ -144,6 +144,7 @@ class Database:
         records: Iterable[ElectricityRecord],
         outcome: SyncOutcome,
         observed_at: datetime,
+        account_balance: Decimal | None = None,
     ) -> tuple[int, int]:
         records = list(records)
         with self.connection() as connection:
@@ -153,13 +154,28 @@ class Database:
                 key=lambda record: record.occurred_at,
                 default=None,
             )
-            if latest_record is not None:
+            snapshot_balance = (
+                account_balance
+                if account_balance is not None
+                else latest_record.balance if latest_record is not None else None
+            )
+            if snapshot_balance is not None:
+                effective_at = (
+                    observed_at
+                    if account_balance is not None
+                    else latest_record.occurred_at
+                )
+                source = (
+                    "property_balance"
+                    if account_balance is not None
+                    else "property_detail"
+                )
                 connection.execute(
                     """
                     INSERT INTO balance_snapshots (
                         observed_at, effective_at, balance, source
                     )
-                    VALUES (?, ?, ?, 'property_detail')
+                    VALUES (?, ?, ?, ?)
                     ON CONFLICT(observed_at) DO UPDATE SET
                         effective_at = excluded.effective_at,
                         balance = excluded.balance,
@@ -167,8 +183,9 @@ class Database:
                     """,
                     (
                         _datetime_to_text(observed_at),
-                        _datetime_to_text(latest_record.occurred_at),
-                        str(latest_record.balance),
+                        _datetime_to_text(effective_at),
+                        str(snapshot_balance),
+                        source,
                     ),
                 )
             connection.execute(

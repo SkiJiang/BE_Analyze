@@ -20,6 +20,7 @@ from electricity_app.property_client import (
 BASE_URL = "https://zf.zhongkeqizhi.cn:9000"
 LOGIN_URL = f"{BASE_URL}/xboot/auth/login"
 DETAILS_URL = f"{BASE_URL}/xboot/goodits/room/pageBalanceDetails"
+BALANCE_URL = f"{BASE_URL}/xboot/goodits/count/getBalance"
 
 
 @respx.mock
@@ -34,6 +35,38 @@ def test_fetch_day_logs_in_and_parses_records(client, fixture_json):
     assert len(records) == 2
     assert str(records[0].energy) == "0.1"
     assert records[0].occurred_at.tzinfo == ZoneInfo("Asia/Shanghai")
+
+
+@respx.mock
+def test_fetch_balance_reads_power_money_for_configured_room(client, settings):
+    respx.post(LOGIN_URL).mock(
+        return_value=httpx.Response(200, json={"success": True, "result": "token-value"})
+    )
+    balance = respx.get(BALANCE_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "success": True,
+                "result": {
+                    "total": 1,
+                    "records": [
+                        {
+                            "roomName": "麒麟科创园-7号楼-8F-805",
+                            "powerMoney": 213.03,
+                            "waterMoney": -127.75,
+                        }
+                    ],
+                },
+            },
+        )
+    )
+
+    assert client.fetch_balance() == Decimal("213.03")
+    assert balance.calls[0].request.headers["Accesstoken"] == "token-value"
+    assert dict(balance.calls[0].request.url.params) == {
+        "pageNumber": "1",
+        "pageSize": "100",
+    }
 
 
 @respx.mock

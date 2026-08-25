@@ -55,6 +55,18 @@ class SyncService:
             return self._record_failure(started_at, start_date, end_date, "failed", exc)
 
         finished_at = datetime.now(_SHANGHAI)
+        account_balance = None
+        fetch_balance = getattr(self._client, "fetch_balance", None)
+        if fetch_balance is not None:
+            try:
+                account_balance = fetch_balance()
+            except PropertyAuthenticationError as exc:
+                return self._record_failure(
+                    started_at, start_date, end_date, "auth_required", exc
+                )
+            except (PropertyProtocolError, PropertyUnavailableError):
+                # Keep valid energy records when the separate balance endpoint is unavailable.
+                account_balance = None
         pending_outcome = SyncOutcome(
             started_at=started_at,
             finished_at=finished_at,
@@ -65,7 +77,12 @@ class SyncService:
             inserted=0,
             updated=0,
         )
-        inserted, updated = self._db.apply_sync(records, pending_outcome, finished_at)
+        inserted, updated = self._db.apply_sync(
+            records,
+            pending_outcome,
+            finished_at,
+            account_balance=account_balance,
+        )
         return SyncOutcome(
             started_at=started_at,
             finished_at=finished_at,
